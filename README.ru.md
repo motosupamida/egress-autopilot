@@ -55,7 +55,7 @@
 Нужен Docker с Compose v2.
 
 ```sh
-git clone https://github.com/<owner>/egress-autopilot.git
+git clone https://github.com/motosupamida/egress-autopilot.git
 cd egress-autopilot
 mkdir -p config
 cp examples/config.toml config/config.toml
