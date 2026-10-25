@@ -1,0 +1,70 @@
+services:
+  xray:
+    image: teddysun/xray:26.10.17
+    container_name: egress-xray
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      # a directory, not the file: the manager replaces config.json atomically (new inode)
+      - ./xray:/etc/xray:ro
+    networks:
+      egress:
+      control:
+        ipv4_address: 10.79.0.2
+    healthcheck:
+      test: ["CMD", "nc", "-z", "-w", "3", "127.0.0.1", "1080"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  manager:
+    build: .
+    image: egress-autopilot:local
+    container_name: egress-manager
+    restart: unless-stopped
+    depends_on:
+      - xray
+    environment:
+      - TZ=${TZ:-UTC}
+      - XRAY_API=10.79.0.2:10085
+      - PROD_PROXY=http://10.79.0.2:1080
+      # secrets referenced from config.toml as ${NAME} go here or into .env
+      # - SUB_MAIN_URL=${SUB_MAIN_URL}
+    volumes:
+      - ./xray:/xray
+      - ./config:/config:ro
+      - ./data:/data
+    ports:
+      # HTTP API — loopback only; widen deliberately (it has a token, but no TLS)
+      - "127.0.0.1:8765:8765"
+    networks:
+      control:
+        ipv4_address: 10.79.0.3
+      outside:
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW  # ping
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+networks:
+  # proxy clients: join it from other stacks as an external network named "egress"
+  egress:
+    name: egress
+  control:
+    # only xray and the manager: the xray API (10085) is invisible to anyone else
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.79.0.0/24
+  # direct internet for the manager: fetching subscriptions, probing nodes, home checks
+  outside:

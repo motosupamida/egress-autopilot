@@ -1,0 +1,6 @@
+/config/
+/data/
+/xray/
+.env
+__pycache__/
+*.pyc

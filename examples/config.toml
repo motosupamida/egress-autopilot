@@ -1,0 +1,130 @@
+# egress-autopilot configuration. Copy to ./config/config.toml and edit.
+# Every key except [[subscription]] is optional; the values below are the defaults.
+# Strings may reference environment variables: url = "${SUB_MAIN_URL}".
+# Full reference: docs/configuration.md
+
+# --- Subscriptions -------------------------------------------------------------------
+# Priority 1 is the most preferred. The manager always tries to sit on the
+# highest-priority subscription that has a node passing every check.
+# Supported formats: base64 or plain list of vless:// vmess:// trojan:// ss:// hysteria2://
+# links, or JSON xray configs (one object or an array, "remarks" + outbounds).
+
+[[subscription]]
+name = "main"                 # A-Z a-z 0-9 _ . -  (used in logs, API, metrics)
+url = "${SUB_MAIN_URL}"
+priority = 1
+
+[[subscription]]
+name = "backup"
+url = "https://example.com/sub/another-token"
+priority = 2
+# flags = ["noexpiry"]        # ignore expiry / traffic headers (some providers send wrong ones)
+
+# [[subscription]]
+# name = "public"
+# url = "https://raw.githubusercontent.com/<someone>/<free-list>/main/sub.txt"
+# priority = 9
+# flags = ["noexpiry", "free"]  # "free": raise a critical alert while running on it
+
+# --- Node selection ------------------------------------------------------------------
+[selection]
+max_latency_ms = 800          # warm latency limit for a "good" node
+min_speed_mbps = 10           # speed test threshold; slower nodes are quarantined
+blocked_countries = []        # exit countries never accepted, e.g. ["RU"] or ["IR"]; also
+                              # skips nodes whose name carries that flag emoji
+quarantine_hours = 24
+big_subscription = 100        # above this many nodes: parallel search, stop early, "dead" tracking
+big_good_enough = 10          # in a big subscription, stop the search after this many good nodes
+dead_days = 30                # big subscription: node failing twice dead_gap_hours apart sleeps this long
+dead_gap_hours = 6
+light_sample = 10             # nodes of the lowest-priority subscription probed per scheduled cycle
+
+# Endpoints for node checks; two random ones are tried per check.
+# cloudflare and ipinfo also report the exit country.
+# [selection.probe_targets]
+# cloudflare = "https://cloudflare.com/cdn-cgi/trace"
+# google = "https://www.google.com/generate_204"
+# ipinfo = "https://ipinfo.io/json"
+
+# --- Timing --------------------------------------------------------------------------
+[schedule]
+fast_interval_s = [120, 240]  # random pause between quick checks of the active node
+scheduled_every_h = 6         # subscription refresh, return to higher priority, full light check
+vpn_speed_every_h = 6         # speed test of the active node
+return_min_gap_min = 60       # go back up no more often than this
+return_confirm = 3            # ...and only after this many good checks
+return_confirm_pause_s = 100  # ...spaced this far apart
+retry_bad_min = 15            # while degraded/dead, repeat the full search this often
+pin_hours = 24                # pin and pause (POST /action) expire by themselves
+pause_hours = 24
+
+# --- VPN speed test ------------------------------------------------------------------
+[speedtest]
+duration_s = 20               # time-bound; speed = downloaded / elapsed
+max_bytes = 25000000          # byte range requested from targets with range = true
+min_bytes = 2097152           # less than this in duration_s — target is broken, try the next
+# Tried in order, two attempts each, until one reaches min_speed_mbps.
+# [[speedtest.targets]]
+# name = "cloudflare"
+# url = "https://speed.cloudflare.com/__down?bytes=25000000"
+# [[speedtest.targets]]
+# name = "ovh"
+# url = "https://proof.ovh.net/files/100Mb.dat"
+# range = true
+
+# --- Direct (home) internet ----------------------------------------------------------
+# Without direct internet the manager never switches: a dead uplink is not a dead VPN.
+[home]
+enabled = true                # false: no pings/speed tests beyond the direct_check gate
+ping_targets = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]   # add your router, e.g. "192.168.1.1"
+direct_check = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]   # "internet is up" if any answers; use
+                                                   # domestic hosts if foreign ones are filtered
+direct_http = "http://connectivitycheck.gstatic.com/generate_204"  # fallback when ICMP is blocked
+speed_every_h = [2.5, 3.5]    # random interval between direct speed tests
+speed_streams = 4             # parallel downloads; one stream rarely saturates a fast line
+speed_duration_s = 10
+speed_min_bytes = 20971520
+# Large files reachable directly from your network, tried in order.
+# [[home.speed_targets]]
+# name = "cloudflare"
+# url = "https://speed.cloudflare.com/__down?bytes=1000000000"
+
+# --- Alert thresholds ----------------------------------------------------------------
+[alerts]
+expire_warn_days = 3          # from the subscription-userinfo header
+traffic_warn_pct = 90
+fetch_alert_h = 24            # subscription not fetched for this long
+internet_alert_min = 10       # no direct internet for this long
+
+# --- Notifications -------------------------------------------------------------------
+# Events are JSON (docs/notifications.md). Bridge them to whatever you use.
+[notify]
+min_severity = "info"         # "info" or "critical"; applies to every sink below
+file = true                   # /data/events.jsonl, one event per line
+file_max_mb = 5               # then rotated to events.jsonl.1
+
+# POST the event as JSON. Repeat the block for several receivers.
+# [[notify.webhook]]
+# url = "http://192.168.1.10:8080/hooks/egress"
+# headers = { Authorization = "Bearer ${HOOK_TOKEN}" }
+# min_severity = "critical"
+# timeout_s = 10
+
+# Run a command with the event JSON on stdin (mount your script into the container).
+# The image has sh, curl and python3.
+# [[notify.exec]]
+# command = ["/config/hooks/notify.sh"]
+# min_severity = "info"
+# timeout_s = 30
+
+# --- HTTP API ------------------------------------------------------------------------
+[api]
+port = 8765
+token = ""                    # empty: $API_TOKEN, else generated into /data/api-token
+metrics_public = false        # true: /metrics without a token (for a Prometheus on a trusted net)
+
+# --- Storage -------------------------------------------------------------------------
+[storage]
+retention_days = 365
+max_db_mb = 800               # oldest records are dropped above this
+node_forget_days = 30         # nodes absent from every subscription this long are forgotten
